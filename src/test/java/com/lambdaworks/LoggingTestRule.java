@@ -58,6 +58,7 @@ public class LoggingTestRule implements MethodRule {
                 try {
                     runTest();
                 } catch (Throwable t) {
+                    t.printStackTrace();
                     if (threadDumpOnFailure) {
                         printThreadDump(logger);
                     }
