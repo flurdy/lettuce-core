@@ -129,52 +129,86 @@ class SentinelTopologyRefresh implements AsyncCloseable, Closeable {
         return initializeSentinels();
     }
 
+    /**
+     * Initialize/extend connections to Sentinel servers.
+     *
+     * @return
+     */
     private CompletionStage<Void> initializeSentinels() {
 
         if (closed) {
             return closeFuture;
         }
 
-        List<ConnectionFuture<StatefulRedisPubSubConnection<String, String>>> connectionFutures = new ArrayList<>();
+        Duration timeout = getTimeout();
 
-        Duration timeout = RedisURI.DEFAULT_TIMEOUT_DURATION;
-        for (RedisURI sentinel : sentinels) {
-
-            if (!pubSubConnections.containsKey(sentinel)) {
-
-                ConnectionFuture<StatefulRedisPubSubConnection<String, String>> future = redisClient.connectPubSubAsync(CODEC,
-                        sentinel);
-                timeout = sentinel.getTimeout();
-                pubSubConnections.put(sentinel, future);
-
-                future.whenComplete((connection, throwable) -> {
-
-                    if (throwable != null || closed) {
-                        pubSubConnections.remove(sentinel);
-                    }
-
-                    if (closed) {
-                        connection.closeAsync();
-                    }
-                });
-
-                connectionFutures.add(future);
-            }
-        }
+        List<ConnectionFuture<StatefulRedisPubSubConnection<String, String>>> connectionFutures = potentiallyConnectSentinels();
 
         if (connectionFutures.isEmpty()) {
             return CompletableFuture.completedFuture(null);
         }
 
-        SentinelTopologyRefreshConnections collector = new SentinelTopologyRefreshConnections(connectionFutures.size());
-
         if (closed) {
             return closeAsync();
         }
 
+        SentinelTopologyRefreshConnections collector = collectConnections(connectionFutures);
+
+        CompletionStage<SentinelTopologyRefreshConnections> completionStage = collector.getOrTimeout(timeout, redisClient
+                .getResources().eventExecutorGroup());
+
+        return completionStage.whenComplete((aVoid, throwable) -> {
+
+            if (throwable != null) {
+                closeAsync();
+            }
+        }).thenApply(noop -> (Void) null);
+    }
+
+    /**
+     * Inspect whether additional Sentinel connections are required based on the which Sentinels are currently connected.
+     *
+     * @return list of futures that are notified with the connection progress.
+     */
+    private List<ConnectionFuture<StatefulRedisPubSubConnection<String, String>>> potentiallyConnectSentinels() {
+
+        List<ConnectionFuture<StatefulRedisPubSubConnection<String, String>>> connectionFutures = new ArrayList<>();
+        for (RedisURI sentinel : sentinels) {
+
+            if (pubSubConnections.containsKey(sentinel)) {
+                continue;
+            }
+
+            ConnectionFuture<StatefulRedisPubSubConnection<String, String>> future = redisClient.connectPubSubAsync(CODEC,
+                    sentinel);
+            pubSubConnections.put(sentinel, future);
+
+            future.whenComplete((connection, throwable) -> {
+
+                if (throwable != null || closed) {
+                    pubSubConnections.remove(sentinel);
+                }
+
+                if (closed) {
+                    connection.closeAsync();
+                }
+            });
+
+            connectionFutures.add(future);
+        }
+
+        return connectionFutures;
+    }
+
+    private SentinelTopologyRefreshConnections collectConnections(
+            List<ConnectionFuture<StatefulRedisPubSubConnection<String, String>>> connectionFutures) {
+
+        SentinelTopologyRefreshConnections collector = new SentinelTopologyRefreshConnections(connectionFutures.size());
+
         for (ConnectionFuture<StatefulRedisPubSubConnection<String, String>> connectionFuture : connectionFutures) {
 
             connectionFuture.thenCompose(connection -> {
+
                 connection.addListener(adapter);
                 return connection.async().psubscribe("*").thenApply(v -> connection).whenComplete((c, t) -> {
 
@@ -192,15 +226,28 @@ class SentinelTopologyRefresh implements AsyncCloseable, Closeable {
             });
         }
 
-        CompletionStage<SentinelTopologyRefreshConnections> completionStage = collector.getOrTimeout(timeout, redisClient
-                .getResources().eventExecutorGroup());
+        return collector;
+    }
 
-        return completionStage.whenComplete((aVoid, throwable) -> {
+    /**
+     * @return operation timeout from the first sentinel to connect/first URI. Fallback to default timeout if no other timeout
+     *         found.
+     * @see RedisURI#DEFAULT_TIMEOUT_DURATION
+     */
+    private Duration getTimeout() {
 
-            if (throwable != null) {
-                closeAsync();
+        for (RedisURI sentinel : sentinels) {
+
+            if (!pubSubConnections.containsKey(sentinel)) {
+                return sentinel.getTimeout();
             }
-        }).thenApply(noop -> (Void) null);
+        }
+
+        for (RedisURI sentinel : sentinels) {
+            return sentinel.getTimeout();
+        }
+
+        return RedisURI.DEFAULT_TIMEOUT_DURATION;
     }
 
     private void processMessage(String pattern, String channel, String message) {
@@ -267,7 +314,7 @@ class SentinelTopologyRefresh implements AsyncCloseable, Closeable {
      * {@link #onEvent(Consumer)} may be called by multiple threads concurrently. It's guaranteed the first caller for an
      * expired {@link Timeout} will be called.
      */
-    private static class TimedSemaphore {
+    static class TimedSemaphore {
 
         private final AtomicReference<Timeout> timeoutRef = new AtomicReference<>();
 
