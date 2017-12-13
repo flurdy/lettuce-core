@@ -140,6 +140,11 @@ public class SentinelTopologyRefreshTest {
         RedisPubSubAsyncCommands<String, String> async2 = mock(RedisPubSubAsyncCommands.class);
         when(connection2.async()).thenReturn(async2);
 
+        AsyncCommand<String, String, Void> command = new AsyncCommand<>(new Command<>(CommandType.PSUBSCRIBE, null));
+        command.complete();
+
+        when(async2.psubscribe(anyString())).thenReturn(command);
+
         sut = new SentinelTopologyRefresh(redisClient, "mymaster", Arrays.asList(host1, host2));
 
         when(redisClient.connectPubSubAsync(any(StringCodec.class), eq(host2))).thenReturn(
@@ -162,7 +167,7 @@ public class SentinelTopologyRefreshTest {
         verify(eventExecutors, times(1)).schedule(captor.capture(), anyLong(), any());
         captor.getValue().run();
 
-        verify(redisClient, times(2)).connectPubSub(any(), eq(host2));
+        verify(redisClient, times(2)).connectPubSubAsync(any(), eq(host2));
         assertThat(connections).containsKey(host1).containsKey(host2).hasSize(2);
         verify(refreshRunnable, never()).run();
     }
@@ -173,8 +178,6 @@ public class SentinelTopologyRefreshTest {
         sut = new SentinelTopologyRefresh(redisClient, "mymaster", Arrays.asList(host1, host2));
 
         StatefulRedisPubSubConnection<String, String> connection2 = mock(StatefulRedisPubSubConnection.class);
-        RedisPubSubAsyncCommands<String, String> async2 = mock(RedisPubSubAsyncCommands.class);
-        when(connection2.async()).thenReturn(async2);
         when(connection.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
         when(connection2.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
 
