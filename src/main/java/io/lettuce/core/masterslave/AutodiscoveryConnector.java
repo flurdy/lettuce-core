@@ -123,7 +123,7 @@ class AutodiscoveryConnector<K, V> implements MasterSlaveConnector<K, V> {
 
             connectionProvider.setKnownNodes(nodes);
 
-            MasterSlaveChannelWriter<K, V> channelWriter = new MasterSlaveChannelWriter<>(connectionProvider);
+            MasterSlaveChannelWriter channelWriter = new MasterSlaveChannelWriter(connectionProvider);
 
             StatefulRedisMasterSlaveConnectionImpl<K, V> connection = new StatefulRedisMasterSlaveConnectionImpl<>(
                     channelWriter, codec, redisURI.getTimeout());

@@ -79,7 +79,7 @@ class SentinelConnector<K, V> implements MasterSlaveConnector<K, V> {
 
         connectionProvider.setKnownNodes(nodes);
 
-        MasterSlaveChannelWriter<K, V> channelWriter = new MasterSlaveChannelWriter<K, V>(connectionProvider) {
+        MasterSlaveChannelWriter channelWriter = new MasterSlaveChannelWriter(connectionProvider) {
 
             @Override
             public CompletableFuture<Void> closeAsync() {
