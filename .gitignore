@@ -17,5 +17,4 @@ dependency-reduced-pom.xml
 .vagrant
 Vagrantfile
 CluTest.java
-
-CluTest.java
+build-debug.tgz
